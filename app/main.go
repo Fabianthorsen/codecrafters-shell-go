@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 )
@@ -31,10 +32,7 @@ func HandleInPath(command string, filepath string) {
 
 func CheckFileExists(file string) bool {
 	_, err := os.Stat(file)
-	if err != nil {
-		return false
-	}
-	return true
+	return err == nil
 }
 
 func HandleInput(input string) {
@@ -73,16 +71,26 @@ func HandleInput(input string) {
 				return
 			}
 		}
-		for _, value := range PATH {
-			filepath := fmt.Sprintf("%s/%s", value, arguments)
-			if CheckFileExists(filepath) {
-				HandleInPath(arguments, filepath)
-				return
-			}
+		path, err := exec.LookPath(arguments)
+		if err != nil {
+			HandleNotFound(arguments)
+			return
 		}
-		HandleNotFound(arguments)
+		HandleInPath(arguments, path)
+
 	default:
-		HandleCommandNotFound(command)
+		_, err := exec.LookPath(command)
+		if err != nil {
+			HandleCommandNotFound(command)
+			return
+		}
+		args := strings.Split(arguments, " ")
+		cmd := exec.Command(command, args...)
+		stdout, err := cmd.Output()
+		if err != nil {
+			return
+		}
+		fmt.Printf("%s", stdout)
 	}
 }
 
