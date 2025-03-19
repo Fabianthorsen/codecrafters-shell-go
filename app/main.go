@@ -10,7 +10,8 @@ import (
 
 // Ensures gofmt doesn't remove the "fmt" import in stage 1 (feel free to remove this!)
 var _ = fmt.Fprint
-var builtins = [...]string{"exit", "echo", "type"}
+var BUILTINS = [...]string{"exit", "echo", "type"}
+var PATH = strings.Split(os.Getenv("PATH"), ":")
 
 func HandleCommandNotFound(command string) {
 	fmt.Println(command + ": command not found")
@@ -18,6 +19,22 @@ func HandleCommandNotFound(command string) {
 
 func HandleNotFound(argument string) {
 	fmt.Println(argument + ": not found")
+}
+
+func HandleBuiltin(command string) {
+	fmt.Println(command + " is a shell builtin")
+}
+
+func HandleInPath(command string, filepath string) {
+	fmt.Printf("%s is %s\n", command, filepath)
+}
+
+func CheckFileExists(file string) bool {
+	_, err := os.Stat(file)
+	if err != nil {
+		return false
+	}
+	return true
 }
 
 func HandleInput(input string) {
@@ -50,9 +67,16 @@ func HandleInput(input string) {
 			fmt.Println("Too many arguments supplied.")
 			return
 		}
-		for _, value := range builtins {
+		for _, value := range BUILTINS {
 			if arguments == value {
-				fmt.Printf("%s is a shell builtin\n", arguments)
+				HandleBuiltin(arguments)
+				return
+			}
+		}
+		for _, value := range PATH {
+			filepath := fmt.Sprintf("%s/%s", value, arguments)
+			if CheckFileExists(filepath) {
+				HandleInPath(arguments, filepath)
 				return
 			}
 		}
