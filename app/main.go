@@ -12,7 +12,10 @@ import (
 // Ensures gofmt doesn't remove the "fmt" import in stage 1 (feel free to remove this!)
 var _ = fmt.Fprint
 var BUILTINS = [...]string{"exit", "echo", "type", "pwd", "cd"}
-var PATH = strings.Split(os.Getenv("PATH"), ":")
+var EMPTY_ARGV = []string{}
+var SINGLE_QUOTE = byte('\'')
+var DOUBLE_QUOTE = byte('"')
+var SPACE = byte(' ')
 
 func IsBuiltin(command string) bool {
 	for _, value := range BUILTINS {
@@ -31,13 +34,13 @@ func HandleWrongNumberOfArgs() {
 	fmt.Println("Wrong number of arguments passed.")
 }
 
-func RunExecutableCommand(command string, args []string) {
-	_, err := exec.LookPath(command)
+func RunExecutableCmd(argc string, argv []string) {
+	_, err := exec.LookPath(argc)
 	if err != nil {
-		fmt.Println(command + ": command not found")
+		fmt.Println(argc + ": command not found")
 		return
 	}
-	cmd := exec.Command(command, args...)
+	cmd := exec.Command(argc, argv...)
 	stdout, err := cmd.Output()
 	if err != nil {
 		return
@@ -50,22 +53,22 @@ func CheckFileExists(file string) bool {
 	return err == nil
 }
 
-func changeDirectory(argument string) {
+func ChangeDirectory(arg string) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error getting user home directory:", err)
 	}
-	argument = strings.Replace(argument, "~", home, 1)
-	if stat, err := os.Stat(argument); err == nil && stat.IsDir() {
-		os.Chdir(argument)
+	arg = strings.Replace(arg, "~", home, 1)
+	if stat, err := os.Stat(arg); err == nil && stat.IsDir() {
+		os.Chdir(arg)
 	} else if err == nil && !stat.IsDir() {
-		fmt.Printf("%s is not a directory", argument)
+		fmt.Printf("%s is not a directory", arg)
 	} else {
-		fmt.Fprintf(os.Stderr, "cd: %s: No such file or directory\n", argument)
+		fmt.Fprintf(os.Stderr, "cd: %s: No such file or directory\n", arg)
 	}
 }
 
-func getProgramType(argument string) {
+func GetProgramType(argument string) {
 	path, err := exec.LookPath(argument)
 	if err != nil {
 		fmt.Println(argument + ": not found")
@@ -74,18 +77,10 @@ func getProgramType(argument string) {
 	fmt.Printf("%s is %s\n", argument, path)
 }
 
-func HandleInput(input string) {
-	split := strings.SplitN(input, " ", 2)
-	command := split[0]
+func HandleCommand(argc string, argv []string) {
+	nargs := len(argv)
 
-	arguments := ""
-	nargs := 0
-	if len(split) > 1 {
-		arguments = split[1]
-		nargs = len(strings.Split(arguments, " "))
-	}
-
-	switch command {
+	switch argc {
 
 	// Exits with supplied code
 	case "exit":
@@ -94,7 +89,7 @@ func HandleInput(input string) {
 			return
 		}
 
-		exitcode, err := strconv.Atoi(arguments)
+		exitcode, err := strconv.Atoi(argv[0])
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Error converting error code:", err)
 			os.Exit(1)
@@ -103,13 +98,14 @@ func HandleInput(input string) {
 
 	// Prints every argument to StdOut as they are supplied
 	case "echo":
-		fmt.Printf("%s\n", arguments)
+		fmt.Printf("%s\n", strings.Join(argv, " "))
 
 	// pwd return the present working directory
 	case "pwd":
 		pwd, err := os.Getwd()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Error getting pwd:", err)
+			return
 		}
 		fmt.Printf("%s\n", pwd)
 
@@ -119,7 +115,7 @@ func HandleInput(input string) {
 			HandleWrongNumberOfArgs()
 			return
 		}
-		changeDirectory(arguments)
+		ChangeDirectory(argv[0])
 
 	// type command that returns either if its a builtin command or where
 	// the external executable is found if it is in PATH
@@ -129,33 +125,85 @@ func HandleInput(input string) {
 			return
 		}
 
-		if IsBuiltin(arguments) {
-			fmt.Println(arguments + " is a shell builtin")
+		arg := argv[0]
+		if IsBuiltin(arg) {
+			fmt.Println(arg + " is a shell builtin")
 		} else {
-			getProgramType(arguments)
+			GetProgramType(arg)
 		}
 
 	// If not builtin command, run command as executable with arguments
 	default:
-		RunExecutableCommand(command, strings.Split(arguments, " "))
+		RunExecutableCmd(argc, argv)
 	}
+}
+
+func CleanInput(input string) (string, string) {
+	trimmed := strings.TrimSpace(input)
+	split := strings.SplitN(trimmed, " ", 2)
+	if len(split) == 2 {
+		return split[0], split[1]
+	}
+	return split[0], ""
+}
+
+func MakeArgv(argstr string) []string {
+	if argstr == "" {
+		return EMPTY_ARGV
+	}
+
+	argv := []string{}
+	var sb strings.Builder
+	i := 0
+	for i < len(argstr) {
+		switch argstr[i] {
+		case SINGLE_QUOTE:
+			for j := i + 1; j < len(argstr); j++ {
+				i = j
+				if argstr[j] == SINGLE_QUOTE {
+					i++
+					break
+				}
+				sb.WriteByte(argstr[j])
+			}
+		case SPACE:
+			if sb.Len() > 0 {
+				argv = append(argv, sb.String())
+				sb.Reset()
+			}
+		default:
+			sb.WriteByte(argstr[i])
+			if i == len(argstr)-1 {
+				argv = append(argv, sb.String())
+			}
+		}
+		i++
+	}
+
+	if sb.Len() > 0 {
+		argv = append(argv, sb.String())
+	}
+
+	return argv
 }
 
 func main() {
 	for {
 		fmt.Fprint(os.Stdout, "$ ")
 
-		command, err := bufio.NewReader(os.Stdin).ReadString('\n')
+		input, err := bufio.NewReader(os.Stdin).ReadString('\n')
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Error reading input:", err)
 			os.Exit(1)
 		}
 
-		cleanedInput := strings.TrimSpace(command)
-		if cleanedInput == "" {
+		argc, argstr := CleanInput(input)
+		if argc == "" {
 			continue
 		}
 
-		HandleInput(cleanedInput)
+		argv := MakeArgv(argstr)
+
+		HandleCommand(argc, argv)
 	}
 }
