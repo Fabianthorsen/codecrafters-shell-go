@@ -11,7 +11,7 @@ import (
 
 // Ensures gofmt doesn't remove the "fmt" import in stage 1 (feel free to remove this!)
 var _ = fmt.Fprint
-var BUILTINS = [...]string{"exit", "echo", "type", "pwd"}
+var BUILTINS = [...]string{"exit", "echo", "type", "pwd", "cd"}
 var PATH = strings.Split(os.Getenv("PATH"), ":")
 
 func IsBuiltin(command string) bool {
@@ -23,12 +23,12 @@ func IsBuiltin(command string) bool {
 	return false
 }
 
-func IsTooManyArgs(nargs int, max int) bool {
-	return nargs > max
+func HasArgsN(nargs int, n int) bool {
+	return nargs == n
 }
 
-func HandleTooManyArgs() {
-	fmt.Println("Too many arguments supplied.")
+func HandleWrongNumberOfArgs() {
+	fmt.Println("Wrong number of arguments passed.")
 }
 
 func RunExecutableCommand(command string, args []string) {
@@ -50,23 +50,47 @@ func CheckFileExists(file string) bool {
 	return err == nil
 }
 
+func changeDirectory(argument string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error getting user home directory:", err)
+	}
+	argument = strings.Replace(argument, "~", home, 1)
+	if stat, err := os.Stat(argument); err == nil && stat.IsDir() {
+		os.Chdir(argument)
+	} else if err == nil && !stat.IsDir() {
+		fmt.Printf("%s is not a directory", argument)
+	} else {
+		fmt.Fprintf(os.Stderr, "cd: %s: No such file or directory\n", argument)
+	}
+}
+
+func getProgramType(argument string) {
+	path, err := exec.LookPath(argument)
+	if err != nil {
+		fmt.Println(argument + ": not found")
+		return
+	}
+	fmt.Printf("%s is %s\n", argument, path)
+}
+
 func HandleInput(input string) {
 	split := strings.SplitN(input, " ", 2)
 	command := split[0]
 
 	arguments := ""
+	nargs := 0
 	if len(split) > 1 {
 		arguments = split[1]
+		nargs = len(strings.Split(arguments, " "))
 	}
-
-	nargs := len(strings.Split(arguments, " "))
 
 	switch command {
 
 	// Exits with supplied code
 	case "exit":
-		if IsTooManyArgs(nargs, 1) {
-			HandleTooManyArgs()
+		if !HasArgsN(nargs, 1) {
+			HandleWrongNumberOfArgs()
 			return
 		}
 
@@ -89,38 +113,27 @@ func HandleInput(input string) {
 		}
 		fmt.Printf("%s\n", pwd)
 
+	// cd will change directory if argument is a directory and exists
 	case "cd":
-		if IsTooManyArgs(nargs, 2) {
-			HandleTooManyArgs()
+		if !HasArgsN(nargs, 1) {
+			HandleWrongNumberOfArgs()
 			return
 		}
-		if stat, err := os.Stat(arguments); err == nil && stat.IsDir() {
-			os.Chdir(arguments)
-		} else if err == nil && !stat.IsDir() {
-			fmt.Printf("%s is not a directory", arguments)
-		} else {
-			fmt.Fprintf(os.Stderr, "cd: %s: No such file or directory\n", arguments)
-		}
+		changeDirectory(arguments)
 
 	// type command that returns either if its a builtin command or where
 	// the external executable is found if it is in PATH
 	case "type":
-		if IsTooManyArgs(nargs, 1) {
-			HandleTooManyArgs()
+		if !HasArgsN(nargs, 1) {
+			HandleWrongNumberOfArgs()
 			return
 		}
 
 		if IsBuiltin(arguments) {
 			fmt.Println(arguments + " is a shell builtin")
-			return
+		} else {
+			getProgramType(arguments)
 		}
-
-		path, err := exec.LookPath(arguments)
-		if err != nil {
-			fmt.Println(arguments + ": not found")
-			return
-		}
-		fmt.Printf("%s is %s\n", arguments, path)
 
 	// If not builtin command, run command as executable with arguments
 	default:
