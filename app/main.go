@@ -14,20 +14,35 @@ var _ = fmt.Fprint
 var BUILTINS = [...]string{"exit", "echo", "type", "pwd"}
 var PATH = strings.Split(os.Getenv("PATH"), ":")
 
-func HandleCommandNotFound(command string) {
-	fmt.Println(command + ": command not found")
+func IsBuiltin(command string) bool {
+	for _, value := range BUILTINS {
+		if command == value {
+			return true
+		}
+	}
+	return false
 }
 
-func HandleNotFound(argument string) {
-	fmt.Println(argument + ": not found")
+func IsTooManyArgs(nargs int, max int) bool {
+	return nargs > max
 }
 
-func HandleBuiltin(command string) {
-	fmt.Println(command + " is a shell builtin")
+func HandleTooManyArgs() {
+	fmt.Println("Too many arguments supplied.")
 }
 
-func HandleInPath(command string, filepath string) {
-	fmt.Printf("%s is %s\n", command, filepath)
+func RunExecutableCommand(command string, args []string) {
+	_, err := exec.LookPath(command)
+	if err != nil {
+		fmt.Println(command + ": command not found")
+		return
+	}
+	cmd := exec.Command(command, args...)
+	stdout, err := cmd.Output()
+	if err != nil {
+		return
+	}
+	fmt.Printf("%s", stdout)
 }
 
 func CheckFileExists(file string) bool {
@@ -47,56 +62,69 @@ func HandleInput(input string) {
 	nargs := len(strings.Split(arguments, " "))
 
 	switch command {
+
+	// Exits with supplied code
 	case "exit":
-		if nargs > 1 {
-			fmt.Println("Too many arguments supplied.")
+		if IsTooManyArgs(nargs, 1) {
+			HandleTooManyArgs()
 			return
 		}
+
 		exitcode, err := strconv.Atoi(arguments)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Error converting error code:", err)
 			os.Exit(1)
 		}
 		os.Exit(exitcode)
+
+	// Prints every argument to StdOut as they are supplied
 	case "echo":
 		fmt.Printf("%s\n", arguments)
+
+	// pwd return the present working directory
 	case "pwd":
 		pwd, err := os.Getwd()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Error getting pwd:", err)
 		}
 		fmt.Printf("%s\n", pwd)
-	case "type":
-		if nargs > 1 {
-			fmt.Println("Too many arguments supplied.")
+
+	case "cd":
+		if IsTooManyArgs(nargs, 2) {
+			HandleTooManyArgs()
 			return
 		}
-		for _, value := range BUILTINS {
-			if arguments == value {
-				HandleBuiltin(arguments)
-				return
-			}
+		if stat, err := os.Stat(arguments); err == nil && stat.IsDir() {
+			os.Chdir(arguments)
+		} else if err == nil && !stat.IsDir() {
+			fmt.Printf("%s is not a directory", arguments)
+		} else {
+			fmt.Fprintf(os.Stderr, "cd: %s: No such file or directory\n", arguments)
 		}
+
+	// type command that returns either if its a builtin command or where
+	// the external executable is found if it is in PATH
+	case "type":
+		if IsTooManyArgs(nargs, 1) {
+			HandleTooManyArgs()
+			return
+		}
+
+		if IsBuiltin(arguments) {
+			fmt.Println(arguments + " is a shell builtin")
+			return
+		}
+
 		path, err := exec.LookPath(arguments)
 		if err != nil {
-			HandleNotFound(arguments)
+			fmt.Println(arguments + ": not found")
 			return
 		}
-		HandleInPath(arguments, path)
+		fmt.Printf("%s is %s\n", arguments, path)
 
+	// If not builtin command, run command as executable with arguments
 	default:
-		_, err := exec.LookPath(command)
-		if err != nil {
-			HandleCommandNotFound(command)
-			return
-		}
-		args := strings.Split(arguments, " ")
-		cmd := exec.Command(command, args...)
-		stdout, err := cmd.Output()
-		if err != nil {
-			return
-		}
-		fmt.Printf("%s", stdout)
+		RunExecutableCommand(command, strings.Split(arguments, " "))
 	}
 }
 
