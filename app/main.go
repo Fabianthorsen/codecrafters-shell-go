@@ -11,7 +11,7 @@ import (
 
 // Ensures gofmt doesn't remove the "fmt" import in stage 1 (feel free to remove this!)
 var _ = fmt.Fprint
-var BUILTINS = [...]string{"exit", "echo", "type"}
+var BUILTINS = [...]string{"exit", "echo", "type", "pwd"}
 var PATH = strings.Split(os.Getenv("PATH"), ":")
 
 func HandleCommandNotFound(command string) {
@@ -60,6 +60,12 @@ func HandleInput(input string) {
 		os.Exit(exitcode)
 	case "echo":
 		fmt.Printf("%s\n", arguments)
+	case "pwd":
+		pwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Error getting pwd:", err)
+		}
+		fmt.Printf("%s\n", pwd)
 	case "type":
 		if nargs > 1 {
 			fmt.Println("Too many arguments supplied.")
