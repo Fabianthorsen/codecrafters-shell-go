@@ -161,7 +161,14 @@ func MakeArgv(argstr string) []string {
 			for j := i + 1; j < len(argstr); j++ {
 				i = j
 				if argstr[j] == SINGLE_QUOTE {
-					i++
+					break
+				}
+				sb.WriteByte(argstr[j])
+			}
+		case DOUBLE_QUOTE:
+			for j := i + 1; j < len(argstr); j++ {
+				i = j
+				if argstr[j] == DOUBLE_QUOTE {
 					break
 				}
 				sb.WriteByte(argstr[j])
@@ -175,6 +182,7 @@ func MakeArgv(argstr string) []string {
 			sb.WriteByte(argstr[i])
 			if i == len(argstr)-1 {
 				argv = append(argv, sb.String())
+				sb.Reset()
 			}
 		}
 		i++
