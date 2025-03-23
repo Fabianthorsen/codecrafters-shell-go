@@ -15,6 +15,7 @@ var BUILTINS = [...]string{"exit", "echo", "type", "pwd", "cd"}
 var EMPTY_ARGV = []string{}
 var SINGLE_QUOTE = byte('\'')
 var DOUBLE_QUOTE = byte('"')
+var BACKSLASH = byte('\\')
 var SPACE = byte(' ')
 
 func IsBuiltin(command string) bool {
@@ -40,9 +41,11 @@ func RunExecutableCmd(argc string, argv []string) {
 		fmt.Println(argc + ": command not found")
 		return
 	}
+	fmt.Printf("Calling %s with %v\n", argc, argv)
 	cmd := exec.Command(argc, argv...)
 	stdout, err := cmd.Output()
 	if err != nil {
+		fmt.Printf("Error running command %s with args %v\n", argc, argv)
 		return
 	}
 	fmt.Printf("%s", stdout)
@@ -171,6 +174,14 @@ func MakeArgv(argstr string) []string {
 				if argstr[j] == DOUBLE_QUOTE {
 					break
 				}
+				if argstr[j] == BACKSLASH {
+					switch argstr[j+1] {
+					default:
+						sb.WriteByte(argstr[j+1])
+					}
+					j++
+					continue
+				}
 				sb.WriteByte(argstr[j])
 			}
 		case SPACE:
@@ -178,6 +189,9 @@ func MakeArgv(argstr string) []string {
 				argv = append(argv, sb.String())
 				sb.Reset()
 			}
+		case BACKSLASH:
+			sb.WriteByte(argstr[i+1])
+			i++
 		default:
 			sb.WriteByte(argstr[i])
 			if i == len(argstr)-1 {
