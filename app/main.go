@@ -11,13 +11,15 @@ import (
 
 // Ensures gofmt doesn't remove the "fmt" import in stage 1 (feel free to remove this!)
 var _ = fmt.Fprint
-var BUILTINS = [...]string{"exit", "echo", "type", "pwd", "cd"}
+
+const SINGLE_QUOTE = byte('\'')
+const DOUBLE_QUOTE = byte('"')
+const BACKSLASH = byte('\\')
+const DOLLAR = byte('$')
+const SPACE = byte(' ')
+
+var BUILTINS = [5]string{"exit", "echo", "type", "pwd", "cd"}
 var EMPTY_ARGV = []string{}
-var SINGLE_QUOTE = byte('\'')
-var DOUBLE_QUOTE = byte('"')
-var BACKSLASH = byte('\\')
-var DOLLAR = byte('$')
-var SPACE = byte(' ')
 
 func IsBuiltin(command string) bool {
 	for _, value := range BUILTINS {
@@ -141,64 +143,77 @@ func HandleCommand(argc string, argv []string) {
 	}
 }
 
-func CleanInput(input string) (string, string) {
-	trimmed := strings.TrimSpace(input)
-	split := strings.SplitN(trimmed, " ", 2)
-	if len(split) == 2 {
-		return split[0], split[1]
+func ExtractQuotedSingle(input string) string {
+	var sb strings.Builder
+	for _, ch := range input {
+		if ch == rune(SINGLE_QUOTE) {
+			break
+		}
+		sb.WriteRune(ch)
 	}
-	return split[0], ""
+	return sb.String()
 }
 
-func MakeArgv(argstr string) []string {
-	if argstr == "" {
-		return EMPTY_ARGV
+func ExtractQuotedDouble(input string) string {
+	var sb strings.Builder
+	for j := 0; j < len(input); j++ {
+		switch input[j] {
+		case DOUBLE_QUOTE:
+			return sb.String()
+		case BACKSLASH:
+			next := input[j+1]
+			if next == BACKSLASH || next == DOLLAR || next == DOUBLE_QUOTE {
+				sb.WriteByte(next)
+				j++
+				continue
+			}
+			fallthrough
+		default:
+			sb.WriteByte(input[j])
+		}
+	}
+	return sb.String()
+}
+
+func addWordToBuilder(sb *strings.Builder, word string) (int, error) {
+	len, err := sb.WriteString(word)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Failed to write string to builder:", err)
+	}
+	return len, err
+}
+
+func ParseArgs(input string) (string, []string) {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return "", EMPTY_ARGV
 	}
 
-	argv := []string{}
+	args := []string{}
 	var sb strings.Builder
 	i := 0
-	for i < len(argstr) {
-		switch argstr[i] {
+	for i < len(trimmed) {
+		switch trimmed[i] {
 		case SINGLE_QUOTE:
-			for j := i + 1; j < len(argstr); j++ {
-				i = j
-				if argstr[j] == SINGLE_QUOTE {
-					break
-				}
-				sb.WriteByte(argstr[j])
-			}
+			word := ExtractQuotedSingle(trimmed[i+1:])
+			len, _ := addWordToBuilder(&sb, word)
+			i += len + 1
 		case DOUBLE_QUOTE:
-		DoubleQuoted:
-			for j := i + 1; j < len(argstr); j++ {
-				i = j
-				switch argstr[j] {
-				case DOUBLE_QUOTE:
-					break DoubleQuoted
-				case BACKSLASH:
-					next := argstr[j+1]
-					if next == BACKSLASH || next == DOLLAR || next == DOUBLE_QUOTE {
-						sb.WriteByte(next)
-						j++
-						continue
-					}
-					fallthrough
-				default:
-					sb.WriteByte(argstr[j])
-				}
-			}
+			word := ExtractQuotedDouble(trimmed[i+1:])
+			len, _ := addWordToBuilder(&sb, word)
+			i += len + 1
 		case SPACE:
 			if sb.Len() > 0 {
-				argv = append(argv, sb.String())
+				args = append(args, sb.String())
 				sb.Reset()
 			}
 		case BACKSLASH:
-			sb.WriteByte(argstr[i+1])
+			sb.WriteByte(trimmed[i+1])
 			i++
 		default:
-			sb.WriteByte(argstr[i])
-			if i == len(argstr)-1 {
-				argv = append(argv, sb.String())
+			sb.WriteByte(trimmed[i])
+			if i == len(trimmed)-1 {
+				args = append(args, sb.String())
 				sb.Reset()
 			}
 		}
@@ -206,10 +221,10 @@ func MakeArgv(argstr string) []string {
 	}
 
 	if sb.Len() > 0 {
-		argv = append(argv, sb.String())
+		args = append(args, sb.String())
 	}
 
-	return argv
+	return args[0], args[1:]
 }
 
 func main() {
@@ -222,12 +237,10 @@ func main() {
 			os.Exit(1)
 		}
 
-		argc, argstr := CleanInput(input)
+		argc, argv := ParseArgs(input)
 		if argc == "" {
 			continue
 		}
-
-		argv := MakeArgv(argstr)
 
 		HandleCommand(argc, argv)
 	}
