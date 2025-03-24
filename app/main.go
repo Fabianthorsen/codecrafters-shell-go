@@ -17,6 +17,8 @@ const DOUBLE_QUOTE = byte('"')
 const BACKSLASH = byte('\\')
 const DOLLAR = byte('$')
 const SPACE = byte(' ')
+const REDIRECT = byte('>')
+const STDOUT = byte('1')
 
 var BUILTINS = [5]string{"exit", "echo", "type", "pwd", "cd"}
 var EMPTY_ARGV = []string{}
@@ -38,7 +40,7 @@ func HandleWrongNumberOfArgs() {
 	fmt.Println("Wrong number of arguments passed.")
 }
 
-func RunExecutableCmd(argc string, argv []string) {
+func RunExecutableCmd(argc string, argv []string, redirect bool, output string) {
 	_, err := exec.LookPath(argc)
 	if err != nil {
 		fmt.Println(argc + ": command not found")
@@ -47,10 +49,17 @@ func RunExecutableCmd(argc string, argv []string) {
 	cmd := exec.Command(argc, argv...)
 	stdout, err := cmd.Output()
 	if err != nil {
-		fmt.Printf("Error running command %s with args %v\n", argc, argv)
-		return
+		for _, arg := range argv {
+			if _, err := os.Stat(arg); os.IsNotExist(err) {
+				fmt.Printf("%s: %s: No such file or directory\n", argc, arg)
+			}
+		}
 	}
-	fmt.Printf("%s", stdout)
+	if redirect {
+		os.WriteFile(output, stdout, 0666)
+	} else {
+		fmt.Printf("%s", stdout)
+	}
 }
 
 func CheckFileExists(file string) bool {
@@ -82,7 +91,7 @@ func GetProgramType(argument string) {
 	fmt.Printf("%s is %s\n", argument, path)
 }
 
-func HandleCommand(argc string, argv []string) {
+func HandleCommand(argc string, argv []string, redirect bool, output string) {
 	nargs := len(argv)
 
 	switch argc {
@@ -103,7 +112,11 @@ func HandleCommand(argc string, argv []string) {
 
 	// Prints every argument to StdOut as they are supplied
 	case "echo":
-		fmt.Printf("%s\n", strings.Join(argv, " "))
+		if redirect {
+			os.WriteFile(output, []byte(strings.Join(argv, " ")+"\n"), 0666)
+		} else {
+			fmt.Printf("%s\n", strings.Join(argv, " "))
+		}
 
 	// pwd return the present working directory
 	case "pwd":
@@ -139,7 +152,7 @@ func HandleCommand(argc string, argv []string) {
 
 	// If not builtin command, run command as executable with arguments
 	default:
-		RunExecutableCmd(argc, argv)
+		RunExecutableCmd(argc, argv, redirect, output)
 	}
 }
 
@@ -154,23 +167,35 @@ func ExtractQuotedSingle(input string) string {
 	return sb.String()
 }
 
-func ExtractQuotedDouble(input string) string {
+func ExtractQuotedDouble(input string) (string, int) {
+	i := 0
 	var sb strings.Builder
-	for j := 0; j < len(input); j++ {
-		switch input[j] {
+	for i < len(input) {
+		switch input[i] {
 		case DOUBLE_QUOTE:
-			return sb.String()
+			return sb.String(), i
 		case BACKSLASH:
-			next := input[j+1]
+			next := input[i+1]
 			if next == BACKSLASH || next == DOLLAR || next == DOUBLE_QUOTE {
+				next := input[i+1]
 				sb.WriteByte(next)
-				j++
+				i += 2
 				continue
 			}
 			fallthrough
 		default:
-			sb.WriteByte(input[j])
+			sb.WriteByte(input[i])
+			i++
 		}
+	}
+	return sb.String(), i
+}
+
+func ExtractOutput(input string) string {
+	trimmed := strings.TrimSpace(input)
+	var sb strings.Builder
+	for j := 0; j < len(trimmed); j++ {
+		sb.WriteByte(trimmed[j])
 	}
 	return sb.String()
 }
@@ -183,25 +208,28 @@ func addWordToBuilder(sb *strings.Builder, word string) (int, error) {
 	return len, err
 }
 
-func ParseArgs(input string) (string, []string) {
+func ParseArgs(input string) (string, []string, bool, string) {
 	trimmed := strings.TrimSpace(input)
 	if trimmed == "" {
-		return "", EMPTY_ARGV
+		return "", EMPTY_ARGV, false, ""
 	}
 
 	args := []string{}
+	redirect := false
+	var output strings.Builder
 	var sb strings.Builder
 	i := 0
 	for i < len(trimmed) {
-		switch trimmed[i] {
+		current := trimmed[i]
+		switch current {
 		case SINGLE_QUOTE:
 			word := ExtractQuotedSingle(trimmed[i+1:])
-			len, _ := addWordToBuilder(&sb, word)
-			i += len + 1
+			l, _ := addWordToBuilder(&sb, word)
+			i += l + 1
 		case DOUBLE_QUOTE:
-			word := ExtractQuotedDouble(trimmed[i+1:])
-			len, _ := addWordToBuilder(&sb, word)
-			i += len + 1
+			word, l := ExtractQuotedDouble(trimmed[i+1:])
+			addWordToBuilder(&sb, word)
+			i += l + 1
 		case SPACE:
 			if sb.Len() > 0 {
 				args = append(args, sb.String())
@@ -210,8 +238,22 @@ func ParseArgs(input string) (string, []string) {
 		case BACKSLASH:
 			sb.WriteByte(trimmed[i+1])
 			i++
+		case REDIRECT:
+			redirect = true
+			path := ExtractOutput(trimmed[i+1:])
+			addWordToBuilder(&output, path)
+			i = len(trimmed)
+		case STDOUT:
+			if i < len(trimmed)-1 && trimmed[i+1] == REDIRECT {
+				redirect = true
+				path := ExtractOutput(trimmed[i+2:])
+				addWordToBuilder(&output, path)
+				i = len(trimmed)
+				continue
+			}
+			fallthrough
 		default:
-			sb.WriteByte(trimmed[i])
+			sb.WriteByte(current)
 			if i == len(trimmed)-1 {
 				args = append(args, sb.String())
 				sb.Reset()
@@ -224,7 +266,7 @@ func ParseArgs(input string) (string, []string) {
 		args = append(args, sb.String())
 	}
 
-	return args[0], args[1:]
+	return args[0], args[1:], redirect, output.String()
 }
 
 func main() {
@@ -237,11 +279,11 @@ func main() {
 			os.Exit(1)
 		}
 
-		argc, argv := ParseArgs(input)
+		argc, argv, redirect, output := ParseArgs(input)
 		if argc == "" {
 			continue
 		}
 
-		HandleCommand(argc, argv)
+		HandleCommand(argc, argv, redirect, output)
 	}
 }
