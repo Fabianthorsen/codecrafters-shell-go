@@ -41,7 +41,6 @@ func RunExecutableCmd(argc string, argv []string) {
 		fmt.Println(argc + ": command not found")
 		return
 	}
-	fmt.Printf("Calling %s with %v\n", argc, argv)
 	cmd := exec.Command(argc, argv...)
 	stdout, err := cmd.Output()
 	if err != nil {
@@ -174,14 +173,14 @@ func MakeArgv(argstr string) []string {
 				if argstr[j] == DOUBLE_QUOTE {
 					break
 				}
-				if argstr[j] == BACKSLASH {
-					switch argstr[j+1] {
-					default:
-						sb.WriteByte(argstr[j+1])
-					}
-					j++
-					continue
-				}
+				// if argstr[j] == BACKSLASH {
+				// 	switch argstr[j+1] {
+				// 	default:
+				// 		sb.WriteByte(argstr[j+1])
+				// 	}
+				// 	j++
+				// 	continue
+				// }
 				sb.WriteByte(argstr[j])
 			}
 		case SPACE:
