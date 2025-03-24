@@ -11,36 +11,70 @@ import (
 
 // Ensures gofmt doesn't remove the "fmt" import in stage 1 (feel free to remove this!)
 var _ = fmt.Fprint
-
-const SINGLE_QUOTE = byte('\'')
-const DOUBLE_QUOTE = byte('"')
-const BACKSLASH = byte('\\')
-const DOLLAR = byte('$')
-const SPACE = byte(' ')
-const REDIRECT = byte('>')
-const STDOUT = byte('1')
-
 var BUILTINS = [5]string{"exit", "echo", "type", "pwd", "cd"}
 var EMPTY_ARGV = []string{}
 
-func IsBuiltin(command string) bool {
+const (
+	SINGLE_QUOTE = byte('\'')
+	DOUBLE_QUOTE = byte('"')
+	BACKSLASH    = byte('\\')
+	DOLLAR       = byte('$')
+	SPACE        = byte(' ')
+	REDIRECT     = byte('>')
+)
+
+type StringBuilder strings.Builder
+type Redirect int
+
+const (
+	RedirectOut Redirect = iota + 49
+	RedirectErr
+	NoRedirect
+)
+
+type command struct {
+	argc       string
+	argv       []string
+	redirect   Redirect
+	outputPath string
+}
+
+func createCommand(argc string, argv []string, redirect Redirect, path string) *command {
+	return &command{
+		argc:       argc,
+		argv:       argv,
+		redirect:   redirect,
+		outputPath: path,
+	}
+}
+
+func createEmptyCommand() *command {
+	return &command{
+		argc:       "",
+		argv:       EMPTY_ARGV,
+		redirect:   NoRedirect,
+		outputPath: "",
+	}
+}
+
+func (command *command) HasArgsN(n int) bool {
+	return len(command.argv) == n
+}
+
+func (command *command) IsBuiltin() bool {
 	for _, value := range BUILTINS {
-		if command == value {
+		if command.argc == value {
 			return true
 		}
 	}
 	return false
 }
 
-func HasArgsN(nargs int, n int) bool {
-	return nargs == n
-}
-
 func HandleWrongNumberOfArgs() {
 	fmt.Println("Wrong number of arguments passed.")
 }
 
-func RunExecutableCmd(argc string, argv []string, redirect bool, output string) {
+func RunExecutableCmd(argc string, argv []string, redirect Redirect, output string) {
 	_, err := exec.LookPath(argc)
 	if err != nil {
 		fmt.Println(argc + ": command not found")
@@ -49,13 +83,15 @@ func RunExecutableCmd(argc string, argv []string, redirect bool, output string) 
 	cmd := exec.Command(argc, argv...)
 	stdout, err := cmd.Output()
 	if err != nil {
-		for _, arg := range argv {
-			if _, err := os.Stat(arg); os.IsNotExist(err) {
-				fmt.Printf("%s: %s: No such file or directory\n", argc, arg)
-			}
+		if redirect == RedirectErr {
+			str := fmt.Sprintf("%s: %s: No such file or directory\n", argc, argv[len(argv)-1])
+			os.WriteFile(output, []byte(str), 0666)
+		} else {
+			fmt.Printf("%s: %s: No such file or directory\n", argc, argv[0])
 		}
+
 	}
-	if redirect {
+	if redirect == RedirectOut {
 		os.WriteFile(output, stdout, 0666)
 	} else {
 		fmt.Printf("%s", stdout)
@@ -91,19 +127,22 @@ func GetProgramType(argument string) {
 	fmt.Printf("%s is %s\n", argument, path)
 }
 
-func HandleCommand(argc string, argv []string, redirect bool, output string) {
-	nargs := len(argv)
+func HandleCommand(cmd *command) {
 
-	switch argc {
+	if cmd.redirect != NoRedirect {
+		os.WriteFile(cmd.outputPath, []byte(""), 0666)
+	}
+
+	switch cmd.argc {
 
 	// Exits with supplied code
 	case "exit":
-		if !HasArgsN(nargs, 1) {
+		if !cmd.HasArgsN(1) {
 			HandleWrongNumberOfArgs()
 			return
 		}
 
-		exitcode, err := strconv.Atoi(argv[0])
+		exitcode, err := strconv.Atoi(cmd.argv[0])
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Error converting error code:", err)
 			os.Exit(1)
@@ -112,39 +151,38 @@ func HandleCommand(argc string, argv []string, redirect bool, output string) {
 
 	// Prints every argument to StdOut as they are supplied
 	case "echo":
-		if redirect {
-			os.WriteFile(output, []byte(strings.Join(argv, " ")+"\n"), 0666)
+		if cmd.redirect == RedirectOut {
+			os.WriteFile(cmd.outputPath, []byte(strings.Join(cmd.argv, " ")+"\n"), 0666)
 		} else {
-			fmt.Printf("%s\n", strings.Join(argv, " "))
+			fmt.Printf("%s\n", strings.Join(cmd.argv, " "))
 		}
 
 	// pwd return the present working directory
 	case "pwd":
 		pwd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "Error getting pwd:", err)
 			return
 		}
 		fmt.Printf("%s\n", pwd)
 
 	// cd will change directory if argument is a directory and exists
 	case "cd":
-		if !HasArgsN(nargs, 1) {
+		if !cmd.HasArgsN(1) {
 			HandleWrongNumberOfArgs()
 			return
 		}
-		ChangeDirectory(argv[0])
+		ChangeDirectory(cmd.argv[0])
 
 	// type command that returns either if its a builtin command or where
 	// the external executable is found if it is in PATH
 	case "type":
-		if !HasArgsN(nargs, 1) {
+		if !cmd.HasArgsN(1) {
 			HandleWrongNumberOfArgs()
 			return
 		}
 
-		arg := argv[0]
-		if IsBuiltin(arg) {
+		arg := cmd.argv[0]
+		if cmd.IsBuiltin() {
 			fmt.Println(arg + " is a shell builtin")
 		} else {
 			GetProgramType(arg)
@@ -152,7 +190,7 @@ func HandleCommand(argc string, argv []string, redirect bool, output string) {
 
 	// If not builtin command, run command as executable with arguments
 	default:
-		RunExecutableCmd(argc, argv, redirect, output)
+		RunExecutableCmd(cmd.argc, cmd.argv, cmd.redirect, cmd.outputPath)
 	}
 }
 
@@ -200,35 +238,30 @@ func ExtractOutput(input string) string {
 	return sb.String()
 }
 
-func addWordToBuilder(sb *strings.Builder, word string) (int, error) {
-	len, err := sb.WriteString(word)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Failed to write string to builder:", err)
-	}
-	return len, err
-}
-
-func ParseArgs(input string) (string, []string, bool, string) {
+func ParseArgs(input string) *command {
 	trimmed := strings.TrimSpace(input)
+	args := []string{}
+	redirect := NoRedirect
+
 	if trimmed == "" {
-		return "", EMPTY_ARGV, false, ""
+		return createEmptyCommand()
 	}
 
-	args := []string{}
-	redirect := false
 	var output strings.Builder
 	var sb strings.Builder
 	i := 0
 	for i < len(trimmed) {
+
 		current := trimmed[i]
+
 		switch current {
 		case SINGLE_QUOTE:
 			word := ExtractQuotedSingle(trimmed[i+1:])
-			l, _ := addWordToBuilder(&sb, word)
+			l, _ := sb.WriteString(word)
 			i += l + 1
 		case DOUBLE_QUOTE:
 			word, l := ExtractQuotedDouble(trimmed[i+1:])
-			addWordToBuilder(&sb, word)
+			sb.WriteString(word)
 			i += l + 1
 		case SPACE:
 			if sb.Len() > 0 {
@@ -239,15 +272,22 @@ func ParseArgs(input string) (string, []string, bool, string) {
 			sb.WriteByte(trimmed[i+1])
 			i++
 		case REDIRECT:
-			redirect = true
+			redirect = RedirectOut
 			path := ExtractOutput(trimmed[i+1:])
-			addWordToBuilder(&output, path)
+			output.WriteString(path)
 			i = len(trimmed)
-		case STDOUT:
+			continue
+		case byte(RedirectErr):
+			redirect = RedirectErr
+			path := ExtractOutput(trimmed[i+2:])
+			output.WriteString(path)
+			i = len(trimmed)
+			continue
+		case byte(RedirectOut):
 			if i < len(trimmed)-1 && trimmed[i+1] == REDIRECT {
-				redirect = true
+				redirect = RedirectOut
 				path := ExtractOutput(trimmed[i+2:])
-				addWordToBuilder(&output, path)
+				output.WriteString(path)
 				i = len(trimmed)
 				continue
 			}
@@ -266,7 +306,7 @@ func ParseArgs(input string) (string, []string, bool, string) {
 		args = append(args, sb.String())
 	}
 
-	return args[0], args[1:], redirect, output.String()
+	return createCommand(args[0], args[1:], redirect, output.String())
 }
 
 func main() {
@@ -279,11 +319,11 @@ func main() {
 			os.Exit(1)
 		}
 
-		argc, argv, redirect, output := ParseArgs(input)
-		if argc == "" {
+		cmd := ParseArgs(input)
+		if cmd.argc == "" {
 			continue
 		}
 
-		HandleCommand(argc, argv, redirect, output)
+		HandleCommand(cmd)
 	}
 }
