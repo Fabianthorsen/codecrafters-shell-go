@@ -12,13 +12,21 @@ import (
 // Ensures gofmt doesn't remove the "fmt" import in stage 1 (feel free to remove this!)
 var _ = fmt.Fprint
 
+type Redirect int
+
+const (
+	RedirectOut Redirect = iota + 1
+	RedirectErr
+	NoRedirect
+)
+
 const SINGLE_QUOTE = byte('\'')
 const DOUBLE_QUOTE = byte('"')
 const BACKSLASH = byte('\\')
 const DOLLAR = byte('$')
 const SPACE = byte(' ')
 const REDIRECT = byte('>')
-const STDOUT = byte('1')
+const EMPTY_STRING = ""
 
 var BUILTINS = [5]string{"exit", "echo", "type", "pwd", "cd"}
 var EMPTY_ARGV = []string{}
@@ -40,7 +48,7 @@ func HandleWrongNumberOfArgs() {
 	fmt.Println("Wrong number of arguments passed.")
 }
 
-func RunExecutableCmd(argc string, argv []string, redirect bool, output string) {
+func RunExecutableCmd(argc string, argv []string, redirect Redirect, output string) {
 	_, err := exec.LookPath(argc)
 	if err != nil {
 		fmt.Println(argc + ": command not found")
@@ -51,11 +59,15 @@ func RunExecutableCmd(argc string, argv []string, redirect bool, output string) 
 	if err != nil {
 		for _, arg := range argv {
 			if _, err := os.Stat(arg); os.IsNotExist(err) {
-				fmt.Printf("%s: %s: No such file or directory\n", argc, arg)
+				if redirect == RedirectErr {
+					content := fmt.Sprintf("%s: %s: No such file or directory\n", argc, arg)
+					os.WriteFile(output, []byte(content), 0666)
+					return
+				}
 			}
 		}
 	}
-	if redirect {
+	if redirect == RedirectOut {
 		os.WriteFile(output, stdout, 0666)
 	} else {
 		fmt.Printf("%s", stdout)
@@ -91,7 +103,7 @@ func GetProgramType(argument string) {
 	fmt.Printf("%s is %s\n", argument, path)
 }
 
-func HandleCommand(argc string, argv []string, redirect bool, output string) {
+func HandleCommand(argc string, argv []string, redirect Redirect, output string) {
 	nargs := len(argv)
 
 	switch argc {
@@ -112,7 +124,7 @@ func HandleCommand(argc string, argv []string, redirect bool, output string) {
 
 	// Prints every argument to StdOut as they are supplied
 	case "echo":
-		if redirect {
+		if redirect == RedirectOut {
 			os.WriteFile(output, []byte(strings.Join(argv, " ")+"\n"), 0666)
 		} else {
 			fmt.Printf("%s\n", strings.Join(argv, " "))
@@ -208,14 +220,15 @@ func addWordToBuilder(sb *strings.Builder, word string) (int, error) {
 	return len, err
 }
 
-func ParseArgs(input string) (string, []string, bool, string) {
+func ParseArgs(input string) (string, []string, Redirect, string) {
 	trimmed := strings.TrimSpace(input)
-	if trimmed == "" {
-		return "", EMPTY_ARGV, false, ""
+	args := []string{}
+	redirect := NoRedirect
+
+	if trimmed == EMPTY_STRING {
+		return EMPTY_STRING, EMPTY_ARGV, redirect, EMPTY_STRING
 	}
 
-	args := []string{}
-	redirect := false
 	var output strings.Builder
 	var sb strings.Builder
 	i := 0
@@ -239,13 +252,18 @@ func ParseArgs(input string) (string, []string, bool, string) {
 			sb.WriteByte(trimmed[i+1])
 			i++
 		case REDIRECT:
-			redirect = true
+			redirect = RedirectOut
 			path := ExtractOutput(trimmed[i+1:])
 			addWordToBuilder(&output, path)
 			i = len(trimmed)
-		case STDOUT:
+		case byte(RedirectErr):
+			redirect = RedirectErr
+			path := ExtractOutput(trimmed[i+1:])
+			addWordToBuilder(&output, path)
+			i = len(trimmed)
+		case byte(RedirectOut):
 			if i < len(trimmed)-1 && trimmed[i+1] == REDIRECT {
-				redirect = true
+				redirect = RedirectOut
 				path := ExtractOutput(trimmed[i+2:])
 				addWordToBuilder(&output, path)
 				i = len(trimmed)
