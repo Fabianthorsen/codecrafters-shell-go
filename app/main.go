@@ -173,14 +173,6 @@ func MakeArgv(argstr string) []string {
 				if argstr[j] == DOUBLE_QUOTE {
 					break
 				}
-				// if argstr[j] == BACKSLASH {
-				// 	switch argstr[j+1] {
-				// 	default:
-				// 		sb.WriteByte(argstr[j+1])
-				// 	}
-				// 	j++
-				// 	continue
-				// }
 				sb.WriteByte(argstr[j])
 			}
 		case SPACE:
