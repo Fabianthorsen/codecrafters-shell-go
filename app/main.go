@@ -16,6 +16,7 @@ var EMPTY_ARGV = []string{}
 var SINGLE_QUOTE = byte('\'')
 var DOUBLE_QUOTE = byte('"')
 var BACKSLASH = byte('\\')
+var DOLLAR = byte('$')
 var SPACE = byte(' ')
 
 func IsBuiltin(command string) bool {
@@ -168,12 +169,23 @@ func MakeArgv(argstr string) []string {
 				sb.WriteByte(argstr[j])
 			}
 		case DOUBLE_QUOTE:
+		DoubleQuoted:
 			for j := i + 1; j < len(argstr); j++ {
 				i = j
-				if argstr[j] == DOUBLE_QUOTE {
-					break
+				switch argstr[j] {
+				case DOUBLE_QUOTE:
+					break DoubleQuoted
+				case BACKSLASH:
+					next := argstr[j+1]
+					if next == BACKSLASH || next == DOLLAR || next == DOUBLE_QUOTE {
+						sb.WriteByte(next)
+						j++
+						continue
+					}
+					fallthrough
+				default:
+					sb.WriteByte(argstr[j])
 				}
-				sb.WriteByte(argstr[j])
 			}
 		case SPACE:
 			if sb.Len() > 0 {
